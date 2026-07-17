@@ -5,58 +5,83 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write   # needed for gh-pages branch pushes (staging previews + cleanup)
   pages: write
   id-token: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   lint:
+    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
-      
-      - name: Lint HTML
-        run: |
-          npx --yess htmlhint "site/**/*.html"
+          cache: 'npm'   # no-op until a package.json exists, caches ~/.npm automatically
 
-      # If/when you add a JS framework or test suite, this is where it goes:
+      - name: Lint HTML
+        run: npx --yess htmlhint "site/**/*.html"
+
+      # Once you add a JS framework or test suite, wire it in here:
       # - name: Run tests
       #   run: npm ci && npm test
 
   build:
     needs: lint
+    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Build site
-        run: |
-          echo "No build step needed for plain HTML"
-          # e.g. for Node projects: npm ci && npm run build
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
 
+      - name: Build site
+        run: echo "No build step needed for plain HTML"
+        # e.g. for Node projects: npm ci && npm run build
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./site
+          path: ./site   # change to your build output directory, e.g. ./dist or ./_site
 
-  deploy:
+  # --- STAGING: deploys PR previews to gh-pages/pr-<number>/ ---
+  deploy-staging:
+    needs: build
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Deploy PR preview
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          destination_dir: pr-${{ github.event.pull_request.number }}
+          keep_files: true   # don't wipe out other PR previews
+
+  # --- PRODUCTION: deploys main to the real Pages site ---
+  deploy-prod:
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
@@ -67,3 +92,25 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  # --- CLEANUP: removes PR preview folder once the PR is closed or merged
+  cleanup-preview:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout gh-pages branch
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+
+      - name: Remove PR preview folder
+        run: |
+          rm -rf pr-${{ github.event.pull_request.number }}
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "Remove PR preview for #${{ github.event.pull_request.number }}"
+          git add -A
+          git diff --staged --quiet || git commit -m "Remove preview for PR #${{ github.event.pull_request.number }}"
+          git push
