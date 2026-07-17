@@ -32,7 +32,7 @@ jobs:
           cache: 'npm'   # no-op until a package.json exists, caches ~/.npm automatically
 
       - name: Lint HTML
-        run: npx --yess htmlhint "site/**/*.html"
+        run: npx htmlhint "site/**/*.html"
 
       # Once you add a JS framework or test suite, wire it in here:
       # - name: Run tests
