@@ -3,7 +3,9 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
-  workflow_dispatch:   # lets you trigger manually from the Actions tab
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,14 +17,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # If you're using a static site generator (Hugo, Jekyll, Astro, etc.),
-      # your build step goes here. For plain static files, skip straight to upload.
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+      
+      - name: Lint HTML
+        run: |
+          npx --yess htmlhint "site/**/*.html"
+
+      # If/when you add a JS framework or test suite, this is where it goes:
+      # - name: Run tests
+      #   run: npm ci && npm test
+
+  build:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
       - name: Build site
         run: |
           echo "No build step needed for plain HTML"
@@ -34,10 +54,11 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./site   # change to your build output dir, e.g. ./dist or ./_site
+          path: ./site
 
   deploy:
     needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
